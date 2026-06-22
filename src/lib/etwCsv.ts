@@ -1,11 +1,16 @@
 import type { EtwMeasurementResult } from './etwTypes';
 import { averageDistance, averageDistanceUm, hvDifference, hvDifferenceUm } from './etwTypes';
 
-const HEADER =
-  'ImageName,ID,X,Y,Width(px),Height(px),Width(um),Height(um),PixelW(um/px),PixelH(um/px),' +
-  'H_StartLevel,H_EndLevel,H_X10,H_X90,H_Distance(px),H_Distance(um),' +
-  'V_StartLevel,V_EndLevel,V_X10,V_X90,V_Distance(px),V_Distance(um),' +
-  'Average(px),Average(um),H-V(px),H-V(um)';
+function buildHeader(lowerThPercent: number, upperThPercent: number): string {
+  const lo = Math.round(lowerThPercent);
+  const hi = Math.round(upperThPercent);
+  return (
+    'ImageName,ID,X,Y,Width(px),Height(px),Width(um),Height(um),PixelW(um/px),PixelH(um/px),' +
+    `H_StartLevel,H_EndLevel,H_x${lo},H_x${hi},H_Distance(px),H_Distance(um),` +
+    `V_StartLevel,V_EndLevel,V_y${lo},V_y${hi},V_Distance(px),V_Distance(um),` +
+    'Average(px),Average(um),H-V(px),H-V(um)'
+  );
+}
 
 const f2 = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : 'NaN');
 const f3 = (n: number) => (Number.isFinite(n) ? n.toFixed(3) : 'NaN');
@@ -52,14 +57,23 @@ function escapeField(s: string): string {
   return s;
 }
 
-export function buildCsv(imageName: string, results: EtwMeasurementResult[]): string {
-  const lines = [HEADER];
+export function buildCsv(
+  imageName: string,
+  results: EtwMeasurementResult[],
+  lowerThPercent: number,
+  upperThPercent: number,
+): string {
+  const lines = [buildHeader(lowerThPercent, upperThPercent)];
   for (const r of results) lines.push(csvRow(imageName, r));
   return lines.join('\n') + '\n';
 }
 
-export function buildCsvMulti(rows: Array<{ imageName: string; results: EtwMeasurementResult[] }>): string {
-  const lines = [HEADER];
+export function buildCsvMulti(
+  rows: Array<{ imageName: string; results: EtwMeasurementResult[] }>,
+  lowerThPercent: number,
+  upperThPercent: number,
+): string {
+  const lines = [buildHeader(lowerThPercent, upperThPercent)];
   for (const { imageName, results } of rows) {
     for (const r of results) lines.push(csvRow(imageName, r));
   }

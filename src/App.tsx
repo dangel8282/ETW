@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import type { EtwConfig, EtwMeasurementPoint, EtwMeasurementResult } from './lib/etwTypes';
 import { analyze } from './lib/etwAnalyzer';
 import { loadImageFile, type LoadedImage } from './lib/etwImage';
+import { fetchSampleImages } from './lib/etwSamples';
 import { buildCsv, buildCsvMulti, downloadCsv } from './lib/etwCsv';
 import {
   downloadConfig,
@@ -19,6 +20,7 @@ import { ImageStrip } from './components/ImageStrip';
 import { StepNavigator } from './components/StepNavigator';
 import { StepTrendGraph } from './components/StepTrendGraph';
 import { SaveCsvMenu } from './components/SaveCsvMenu';
+import { AppMenu } from './components/AppMenu';
 
 interface ImageEntry {
   name: string;
@@ -242,6 +244,15 @@ function App() {
     }
   }, [results, selectedPointId]);
 
+  const installImageEntries = (entries: ImageEntry[]) => {
+    cacheClear();
+    setBatchResults({});
+    setImages(entries);
+    setCurrentIdx(0);
+    setResults([]);
+    setStatus(`Loaded ${entries.length} image${entries.length > 1 ? 's' : ''}: ${entries[0].name}`);
+  };
+
   const loadImagesFromInput = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const entries: ImageEntry[] = Array.from(files)
@@ -254,12 +265,22 @@ function App() {
       setStatus('No supported image files selected');
       return;
     }
-    cacheClear();
-    setBatchResults({});
-    setImages(entries);
-    setCurrentIdx(0);
-    setResults([]);
-    setStatus(`Loaded ${entries.length} image${entries.length > 1 ? 's' : ''}: ${entries[0].name}`);
+    installImageEntries(entries);
+  };
+
+  const loadSampleImages = async () => {
+    try {
+      setStatus('Loading sample images…');
+      const files = await fetchSampleImages();
+      const entries: ImageEntry[] = files
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+        )
+        .map((f) => ({ name: f.name, file: f }));
+      installImageEntries(entries);
+    } catch (e) {
+      setStatus(`Sample load failed: ${(e as Error).message}`);
+    }
   };
 
   const onPending = useCallback((rect: PendingRect | null) => setPending(rect), []);
@@ -354,22 +375,33 @@ function App() {
 
   const onSaveCsvCurrent = () => {
     if (results.length === 0 || !image) return;
-    const csv = buildCsv(image.name, results);
+    const csv = buildCsv(image.name, results, config.lowerThresholdPercent, config.upperThresholdPercent);
     const base = image.name.replace(/\.[^.]+$/, '') || 'etw';
     downloadCsv(`${base}_etw.csv`, csv);
   };
 
-  const onSaveCsvAll = () => {
+  const onSaveCsvAll = async () => {
+    if (images.length === 0 || points.length === 0 || batchProgress) return;
+    // 캐시된 batch가 없거나 stale이면 자동으로 Run All 먼저
+    let resultMap: Record<string, EtwMeasurementResult[]> = batchResults;
+    const needsRun = batchStale || Object.keys(batchResults).length === 0;
+    if (needsRun) {
+      const fresh = await runAllAndGetResults();
+      if (!fresh) return; // cancelled
+      resultMap = fresh;
+    }
     const entries = images
-      .map((e) => ({ imageName: e.name, results: batchResults[e.name] }))
+      .map((e) => ({ imageName: e.name, results: resultMap[e.name] }))
       .filter((r): r is { imageName: string; results: EtwMeasurementResult[] } => Array.isArray(r.results));
     if (entries.length === 0) return;
-    const csv = buildCsvMulti(entries);
+    const csv = buildCsvMulti(entries, config.lowerThresholdPercent, config.upperThresholdPercent);
     downloadCsv(`etw_batch_${entries.length}_images.csv`, csv);
   };
 
-  const onRunAll = async () => {
-    if (images.length === 0 || points.length === 0 || batchProgress) return;
+  // 분석 + batch state 갱신 + 새 결과 반환. 호출자는 결과를 직접 사용 가능
+  // (예: Save CSV All 에서 분석 완료 즉시 다운로드 트리거).
+  const runAllAndGetResults = async (): Promise<Record<string, EtwMeasurementResult[]> | null> => {
+    if (images.length === 0 || points.length === 0 || batchProgress) return null;
     batchCancelRef.current = false;
     setBatchProgress({ done: 0, total: images.length });
     const lowerTh = config.lowerThresholdPercent / 100;
@@ -407,9 +439,14 @@ function App() {
     const ok = Object.keys(newResults).length;
     if (batchCancelRef.current) {
       setStatus(`Run All cancelled at ${ok}/${images.length}`);
-    } else {
-      setStatus(`Run All: ${ok}/${images.length}${failed > 0 ? ` (${failed} failed)` : ''}`);
+      return null;
     }
+    setStatus(`Run All: ${ok}/${images.length}${failed > 0 ? ` (${failed} failed)` : ''}`);
+    return newResults;
+  };
+
+  const onRunAll = async () => {
+    await runAllAndGetResults();
   };
 
   const onCancelRunAll = () => {
@@ -434,7 +471,10 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="flex items-center justify-between border-b border-slate-300 bg-white px-4 py-2 shadow-sm">
-        <div className="text-base font-bold text-slate-800">ETW Evaluation</div>
+        <div className="flex items-center gap-2">
+          <div className="text-base font-bold text-slate-800">ETW Evaluation</div>
+          <AppMenu onLoadSamples={loadSampleImages} />
+        </div>
         <div className="truncate text-xs text-slate-600">{status}</div>
       </header>
 
@@ -518,7 +558,7 @@ function App() {
             </button>
             <SaveCsvMenu
               canCurrent={results.length > 0 && !!image}
-              canAll={Object.keys(batchResults).length > 0}
+              canAll={images.length > 0 && points.length > 0 && !batchProgress}
               allCount={Object.keys(batchResults).length}
               allStale={batchStale}
               onCurrent={onSaveCsvCurrent}

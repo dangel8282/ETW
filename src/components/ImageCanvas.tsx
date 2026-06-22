@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { LoadedImage } from '../lib/etwImage';
 import type { EtwMeasurementPoint, EtwMeasurementResult } from '../lib/etwTypes';
 
@@ -23,6 +23,7 @@ interface Props {
   onResizeRoi: (w: number, h: number) => void;
   onMouseMoveImage?: (p: { x: number; y: number } | null) => void;
   onRegister?: () => void;
+  emptyPlaceholder?: ReactNode;
 }
 
 type HandleName = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -65,6 +66,7 @@ export function ImageCanvas({
   onResizeRoi,
   onMouseMoveImage,
   onRegister,
+  emptyPlaceholder,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -623,7 +625,7 @@ export function ImageCanvas({
         </>
       ) : (
         <div className="flex h-full w-full items-center justify-center text-slate-400">
-          Load an image to begin
+          {emptyPlaceholder ?? 'Load an image to begin'}
         </div>
       )}
     </div>

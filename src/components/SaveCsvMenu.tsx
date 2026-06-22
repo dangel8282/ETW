@@ -46,9 +46,16 @@ export function SaveCsvMenu({ canCurrent, canAll, allCount, allStale, onCurrent,
             className="block w-full border-t border-slate-200 px-3 py-1.5 text-left text-xs hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
             disabled={!canAll}
             onClick={() => { onAll(); setOpen(false); }}
+            title={allCount === 0 || allStale ? 'Runs analysis on all images first, then saves' : 'Save batch CSV'}
           >
-            All images <span className="text-slate-400">({allCount})</span>
-            {allStale && <span className="ml-1 text-amber-600">stale</span>}
+            All images
+            {allCount === 0 ? (
+              <span className="ml-1 text-slate-500">(will run all)</span>
+            ) : allStale ? (
+              <span className="ml-1 text-amber-600">(stale — will re-run)</span>
+            ) : (
+              <span className="ml-1 text-slate-400">({allCount})</span>
+            )}
           </button>
         </div>
       )}
