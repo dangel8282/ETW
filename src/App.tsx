@@ -218,11 +218,6 @@ function App() {
     config.pixelHeightUm,
   ]);
 
-  const selectedResult = useMemo(
-    () => results.find((r) => r.pointId === selectedPointId) ?? null,
-    [results, selectedPointId],
-  );
-
   // Defer heavy right-sidebar updates (Recharts × 3 + table) so the canvas can
   // swap images without waiting for the chart layout to re-run.
   const deferredResults = useDeferredValue(results);
