@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   onLoadSamples: () => void;
+  onOpenBestFocusTest: () => void;
 }
 
-export function AppMenu({ onLoadSamples }: Props) {
+export function AppMenu({ onLoadSamples, onOpenBestFocusTest }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -32,12 +33,18 @@ export function AppMenu({ onLoadSamples }: Props) {
         </svg>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[180px] rounded border border-slate-300 bg-white shadow-lg">
+        <div className="absolute left-0 top-full z-20 mt-1 min-w-[200px] rounded border border-slate-300 bg-white shadow-lg">
           <button
             className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-100"
             onClick={() => { onLoadSamples(); setOpen(false); }}
           >
             Load sample images
+          </button>
+          <button
+            className="block w-full border-t border-slate-200 px-3 py-1.5 text-left text-xs hover:bg-slate-100"
+            onClick={() => { onOpenBestFocusTest(); setOpen(false); }}
+          >
+            Batch Best Focus + ETW…
           </button>
         </div>
       )}

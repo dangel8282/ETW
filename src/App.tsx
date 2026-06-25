@@ -21,6 +21,7 @@ import { StepNavigator } from './components/StepNavigator';
 import { StepTrendGraph } from './components/StepTrendGraph';
 import { SaveCsvMenu } from './components/SaveCsvMenu';
 import { AppMenu } from './components/AppMenu';
+import { BestFocusTest } from './components/BestFocusTest';
 
 interface ImageEntry {
   name: string;
@@ -46,6 +47,7 @@ function App() {
   const [results, setResults] = useState<EtwMeasurementResult[]>([]);
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
   const [status, setStatus] = useState<string>('Ready');
+  const [mode, setMode] = useState<'etw' | 'best-focus-test'>('etw');
   const [batchResults, setBatchResults] = useState<Record<string, EtwMeasurementResult[]>>({});
   const [batchStale, setBatchStale] = useState<boolean>(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
@@ -468,12 +470,30 @@ function App() {
     }
   };
 
+  if (mode === 'best-focus-test') {
+    return (
+      <BestFocusTest
+        onClose={() => setMode('etw')}
+        points={points}
+        roiWidth={config.roiWidth}
+        roiHeight={config.roiHeight}
+        lowerThPercent={config.lowerThresholdPercent}
+        upperThPercent={config.upperThresholdPercent}
+        pixelWidthUm={config.pixelWidthUm}
+        pixelHeightUm={config.pixelHeightUm}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="flex items-center justify-between border-b border-slate-300 bg-white px-4 py-2 shadow-sm">
         <div className="flex items-center gap-2">
           <div className="text-base font-bold text-slate-800">ETW Evaluation</div>
-          <AppMenu onLoadSamples={loadSampleImages} />
+          <AppMenu
+            onLoadSamples={loadSampleImages}
+            onOpenBestFocusTest={() => setMode('best-focus-test')}
+          />
         </div>
         <div className="truncate text-xs text-slate-600">{status}</div>
       </header>

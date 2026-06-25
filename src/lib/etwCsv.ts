@@ -80,6 +80,40 @@ export function buildCsvMulti(
   return lines.join('\n') + '\n';
 }
 
+export interface BatchEtwCsvRow {
+  folderName: string;
+  heightUm: number | null;
+  bestFrameRaw: number;
+  bestFrameSub: number;
+  bestImageName: string;
+  results: EtwMeasurementResult[];
+}
+
+function buildBatchHeader(lowerThPercent: number, upperThPercent: number): string {
+  return 'FolderName,HeightUm,BestFrameRaw,BestFrameSub,BestImageName,' + buildHeader(lowerThPercent, upperThPercent);
+}
+
+export function buildBatchEtwCsv(
+  rows: BatchEtwCsvRow[],
+  lowerThPercent: number,
+  upperThPercent: number,
+): string {
+  const lines = [buildBatchHeader(lowerThPercent, upperThPercent)];
+  for (const row of rows) {
+    const prefix = [
+      escapeField(row.folderName),
+      row.heightUm == null ? '' : f3(row.heightUm),
+      row.bestFrameRaw,
+      f3(row.bestFrameSub),
+      escapeField(row.bestImageName),
+    ].join(',');
+    for (const r of row.results) {
+      lines.push(prefix + ',' + csvRow(row.bestImageName, r));
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
 export function downloadCsv(filename: string, csv: string): void {
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
