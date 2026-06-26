@@ -591,11 +591,12 @@ export function MultiRoiBestFocus({ onClose }: Props) {
     return results
       .map((r, idx) => {
         if (!r.bestByRoi.some((b) => b !== null) || r.heightUm === null) return null;
-        const dynVals: Record<string, number | null> = {};
-        r.bestByRoi.forEach((b, i) => {
-          dynVals[`r${i}`] = b ? b.bestStepValue : null;
-        });
-        return { height: r.heightUm, folderIdx: idx, name: r.name, ...dynVals };
+        return {
+          height: r.heightUm,
+          folderIdx: idx,
+          name: r.name,
+          bestByRoi: r.bestByRoi.map((b) => (b ? b.bestStepValue : null)),
+        };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [results]);
@@ -989,15 +990,7 @@ export function MultiRoiBestFocus({ onClose }: Props) {
                   </div>
                 ) : (
                   <HeightTrendChart
-                    data={heightTrendData.map((d) => ({
-                      height: d.height,
-                      folderIdx: d.folderIdx,
-                      name: d.name,
-                      bestByRoi: rois.map((_, i) => {
-                        const v = d[`r${i}`];
-                        return typeof v === 'number' ? v : null;
-                      }),
-                    }))}
+                    data={heightTrendData}
                     rois={rois}
                     selectedHeight={selectedHeight}
                     onPointClick={setSelectedFolderIdx}
