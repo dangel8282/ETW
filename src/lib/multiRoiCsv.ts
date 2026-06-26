@@ -18,9 +18,9 @@ function escape(s: string): string {
   return s;
 }
 
-function bfRound(n: number | null | undefined): number | null {
+function bfPick(n: number | null | undefined): number | null {
   if (n == null || !Number.isFinite(n)) return null;
-  return Math.round(n);
+  return n;
 }
 
 /**
@@ -29,7 +29,7 @@ function bfRound(n: number | null | undefined): number | null {
  *   Center_BF-Left_BF, Center_BF-Right_BF,
  *   (Center_BF-Left_BF + Center_BF-Right_BF) / 2
  *
- * - BF = bestStepValue (반올림)
+ * - BF = bestStepValue (raw, 소수점 3자리 출력)
  * - 차이는 idx 1 (중앙 ROI) 기준, Center − ROI
  * - ROI 가 1개면 BF 컬럼만, 2개면 차이 1개, 3개 이상이면 차이 N-1개 + 평균
  */
@@ -54,13 +54,14 @@ export function buildMultiRoiCsv(rois: NamedRoi[], rows: MrbfFolderRow[]): strin
   }
 
   const lines = [header.join(',')];
+  const fmt = (n: number | null) => (n == null ? '' : n.toFixed(3));
 
   for (const r of rows) {
     const cells: string[] = [escape(r.folderName)];
     const bfValues: (number | null)[] = rois.map((_, i) =>
-      bfRound(r.bestByRoi[i]?.result?.bestStepValue ?? null),
+      bfPick(r.bestByRoi[i]?.result?.bestStepValue ?? null),
     );
-    for (const v of bfValues) cells.push(v == null ? '' : String(v));
+    for (const v of bfValues) cells.push(fmt(v));
 
     if (centerIdx >= 0) {
       const center = bfValues[centerIdx];
@@ -69,15 +70,13 @@ export function buildMultiRoiCsv(rois: NamedRoi[], rows: MrbfFolderRow[]): strin
         const v = bfValues[i];
         const d = v != null && center != null ? center - v : null;
         diffs.push(d);
-        cells.push(d == null ? '' : String(d));
+        cells.push(fmt(d));
       }
       if (diffIndices.length >= 2) {
         const validDiffs = diffs.filter((d): d is number => d != null);
         if (validDiffs.length === diffIndices.length) {
-          const avg = Math.round(
-            validDiffs.reduce((a, b) => a + b, 0) / diffIndices.length,
-          );
-          cells.push(String(avg));
+          const avg = validDiffs.reduce((a, b) => a + b, 0) / diffIndices.length;
+          cells.push(fmt(avg));
         } else {
           cells.push('');
         }
