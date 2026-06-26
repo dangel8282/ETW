@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 interface Props {
   onLoadSamples: () => void;
   onOpenBestFocusTest: () => void;
+  onOpenMultiRoiBestFocus: () => void;
 }
 
-export function AppMenu({ onLoadSamples, onOpenBestFocusTest }: Props) {
+export function AppMenu({ onLoadSamples, onOpenBestFocusTest, onOpenMultiRoiBestFocus }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -45,6 +46,12 @@ export function AppMenu({ onLoadSamples, onOpenBestFocusTest }: Props) {
             onClick={() => { onOpenBestFocusTest(); setOpen(false); }}
           >
             Batch Best Focus + ETW…
+          </button>
+          <button
+            className="block w-full border-t border-slate-200 px-3 py-1.5 text-left text-xs hover:bg-slate-100"
+            onClick={() => { onOpenMultiRoiBestFocus(); setOpen(false); }}
+          >
+            Multi-ROI Best Focus…
           </button>
         </div>
       )}

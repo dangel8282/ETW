@@ -22,6 +22,7 @@ import { StepTrendGraph } from './components/StepTrendGraph';
 import { SaveCsvMenu } from './components/SaveCsvMenu';
 import { AppMenu } from './components/AppMenu';
 import { BestFocusTest } from './components/BestFocusTest';
+import { MultiRoiBestFocus } from './components/MultiRoiBestFocus';
 
 interface ImageEntry {
   name: string;
@@ -47,7 +48,7 @@ function App() {
   const [results, setResults] = useState<EtwMeasurementResult[]>([]);
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null);
   const [status, setStatus] = useState<string>('Ready');
-  const [mode, setMode] = useState<'etw' | 'best-focus-test'>('etw');
+  const [mode, setMode] = useState<'etw' | 'best-focus-test' | 'multi-roi-bf'>('etw');
   const [batchResults, setBatchResults] = useState<Record<string, EtwMeasurementResult[]>>({});
   const [batchStale, setBatchStale] = useState<boolean>(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
@@ -103,9 +104,11 @@ function App() {
     return p;
   };
 
-  // Persist config changes
+  // Persist config changes — debounce 500ms. ROI 드래그/리사이즈 중에는 매 frame
+  // setConfig 가 호출되므로 동기 localStorage 쓰기 부담을 줄임.
   useEffect(() => {
-    saveConfigToStorage(config);
+    const t = window.setTimeout(() => saveConfigToStorage(config), 500);
+    return () => window.clearTimeout(t);
   }, [config]);
 
   // Sync config.points with the live points list — keeps Save Config and points in sync
@@ -485,6 +488,10 @@ function App() {
     );
   }
 
+  if (mode === 'multi-roi-bf') {
+    return <MultiRoiBestFocus onClose={() => setMode('etw')} />;
+  }
+
   return (
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="flex items-center justify-between border-b border-slate-300 bg-white px-4 py-2 shadow-sm">
@@ -493,6 +500,7 @@ function App() {
           <AppMenu
             onLoadSamples={loadSampleImages}
             onOpenBestFocusTest={() => setMode('best-focus-test')}
+            onOpenMultiRoiBestFocus={() => setMode('multi-roi-bf')}
           />
         </div>
         <div className="truncate text-xs text-slate-600">{status}</div>

@@ -25,6 +25,11 @@ export interface CacheEntry {
   pixelCount: number;
   timestamp: number;            // ms
   results: CachedFolder[];
+  // partial decode 시 metric (v2 추가, 이전 entry 호환 위해 옵셔널)
+  totalPixels?: number;
+  totalBytes?: number;
+  partialCount?: number;
+  fileSizeSum?: number;
 }
 
 function readMap(): Record<string, CacheEntry> {
@@ -95,6 +100,28 @@ export function findCacheByBase(base: string): CacheEntry | null {
 export function findCacheExact(fingerprint: string): CacheEntry | null {
   const map = readMap();
   return map[fingerprint] ?? null;
+}
+
+/**
+ * 같은 폴더 set 의 가장 최근 full-decode (partialCount 0/undefined) 시간 찾기.
+ * partial path 전후 시간 비교용. 못 찾으면 null.
+ */
+export function findRecentFullMs(
+  topFolder: string,
+  folderCount: number,
+  totalImages: number,
+): number | null {
+  const map = readMap();
+  const base = makeBaseFingerprint(topFolder, folderCount, totalImages);
+  let best: CacheEntry | null = null;
+  for (const e of Object.values(map)) {
+    if (e.baseFingerprint !== base) continue;
+    // partial path 가 명시적으로 0 이거나, 아직 partial field 가 없는 v1 entry (= 전체 decode 시절)
+    const wasPartial = (e.partialCount ?? 0) > 0;
+    if (wasPartial) continue;
+    if (!best || e.timestamp > best.timestamp) best = e;
+  }
+  return best?.totalMs ?? null;
 }
 
 export function clearAllCache(): void {

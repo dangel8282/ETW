@@ -17,12 +17,14 @@ import type { BfWorkerResult, BfWorkerTask } from '../lib/bestFocusWorker';
 import {
   findCacheByBase,
   findCacheExact,
+  findRecentFullMs,
   makeBaseFingerprint,
   makeFingerprint,
   saveCache,
   type CacheEntry,
 } from '../lib/bestFocusCache';
 import { decodeImageToGray } from '../lib/etwDecodeGray';
+import { EtwBatchTrendChart } from './EtwBatchTrendChart';
 import { analyze } from '../lib/etwAnalyzer';
 import { buildBatchEtwCsv, downloadCsv, type BatchEtwCsvRow } from '../lib/etwCsv';
 import type { EtwMeasurementPoint, EtwMeasurementResult } from '../lib/etwTypes';
@@ -51,6 +53,17 @@ interface FolderResult {
   best: BestFocusResult | null;
   decodeMs: number;
   edgenessMs: number;
+}
+
+interface RunMetrics {
+  totalMs: number;
+  decodeMs: number;       // 누적
+  edgenessMs: number;     // 누적
+  totalImages: number;
+  totalPixels: number;    // ROI 픽셀 합
+  totalBytes: number;     // 실제 read 한 byte (partial 시 헤더+ROI 행)
+  partialCount: number;
+  fileSizeSum: number;    // 원본 파일 사이즈 합
 }
 
 function parseHeightUm(name: string): number | null {
@@ -82,6 +95,17 @@ function groupByFolder(filelist: FileList): FolderInput[] {
 }
 
 const N_WORKERS = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+const STORAGE_KEY_LAST_NAME = 'bf_last_folder_name';
+const STORAGE_KEY_LAST_INFO = 'bf_last_folder_info';
+
+// 모드 전환 시 폴더 / 선택 상태 유지를 위한 module-level cache
+const sessionCache: {
+  folders: FolderInput[];
+  selectedFolderIdx: number;
+} = {
+  folders: [],
+  selectedFolderIdx: 0,
+};
 
 function colorForFolder(idx: number, total: number): string {
   if (total <= 1) return '#2563eb';
@@ -114,9 +138,9 @@ export function BestFocusTest({
   const cleanupRef = useRef<(() => void) | null>(null);
   const workersRef = useRef<Worker[]>([]);
 
-  const [folders, setFolders] = useState<FolderInput[]>([]);
+  const [folders, setFolders] = useState<FolderInput[]>(sessionCache.folders);
   const [results, setResults] = useState<FolderResult[]>([]);
-  const [selectedFolderIdx, setSelectedFolderIdx] = useState<number>(0);
+  const [selectedFolderIdx, setSelectedFolderIdx] = useState<number>(sessionCache.selectedFolderIdx);
   const [visibleSet, setVisibleSet] = useState<Set<number>>(new Set());
 
   const [roi, setRoi] = useState<BestFocusRoi>(() => {
@@ -138,19 +162,59 @@ export function BestFocusTest({
     return [0, 1, 2, 3].includes(v) ? v : 0;
   });
 
-  // ROI / mode 변경 시 자동 저장 (다음 세션/다음 폴더에서 같은 값으로 시작)
+  // ROI / mode 변경 시 자동 저장 — debounce 500ms (드래그/리사이즈 매 frame 부담 방지)
   useEffect(() => {
-    try { localStorage.setItem('bf_last_roi', JSON.stringify(roi)); } catch { /* */ }
+    const t = window.setTimeout(() => {
+      try { localStorage.setItem('bf_last_roi', JSON.stringify(roi)); } catch { /* */ }
+    }, 500);
+    return () => window.clearTimeout(t);
   }, [roi]);
   useEffect(() => {
-    try { localStorage.setItem('bf_last_mode', String(mode)); } catch { /* */ }
+    const t = window.setTimeout(() => {
+      try { localStorage.setItem('bf_last_mode', String(mode)); } catch { /* */ }
+    }, 500);
+    return () => window.clearTimeout(t);
   }, [mode]);
 
   const [running, setRunning] = useState<boolean>(false);
   const [progress, setProgress] = useState<{ done: number; total: number; folderDone: number; folderTotal: number } | null>(null);
-  const [totalMs, setTotalMs] = useState<number | null>(null);
-  const [pixelCount, setPixelCount] = useState<number>(0);
-  const [status, setStatus] = useState<string>('Pick a parent folder');
+  const [metrics, setMetrics] = useState<RunMetrics | null>(null);
+  // 같은 폴더 set 의 이전 full-decode 시간 (자동 비교 표시용). cache 에 partial 없는 entry → 그게 full 추정.
+  const [previousFullMs, setPreviousFullMs] = useState<number | null>(null);
+  const [status, setStatus] = useState<string>(
+    sessionCache.folders.length > 0
+      ? `${sessionCache.folders.length} folder(s) restored — pick to refresh`
+      : 'Pick a parent folder',
+  );
+
+  // session cache sync — 모드 전환 후 복귀 시 복원
+  useEffect(() => { sessionCache.folders = folders; }, [folders]);
+  useEffect(() => { sessionCache.selectedFolderIdx = selectedFolderIdx; }, [selectedFolderIdx]);
+
+  // 폴더가 cache 에서 복원된 경우 — 캐시된 결과 자동 조회/적용
+  useEffect(() => {
+    if (folders.length === 0 || results.length > 0) return;
+    const totalImgs = folders.reduce((a, g) => a + g.files.length, 0);
+    const firstPath = (folders[0].files[0] as File & { webkitRelativePath?: string }).webkitRelativePath || '';
+    const topFolder = firstPath.split('/')[0] || '';
+    const exactFp = makeFingerprint(topFolder, folders.length, totalImgs, roi, mode);
+    let cache = findCacheExact(exactFp);
+    let exactRoiMatch = true;
+    if (!cache) {
+      const baseFp = makeBaseFingerprint(topFolder, folders.length, totalImgs);
+      cache = findCacheByBase(baseFp);
+      exactRoiMatch = false;
+    }
+    if (cache) applyCache(cache, folders, exactRoiMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [lastFolderLabel, setLastFolderLabel] = useState<string | null>(
+    () => localStorage.getItem(STORAGE_KEY_LAST_NAME) || null,
+  );
+  const [lastFolderInfo, setLastFolderInfo] = useState<string | null>(
+    () => localStorage.getItem(STORAGE_KEY_LAST_INFO) || null,
+  );
 
   function onPickFolder(filelist: FileList | null) {
     if (!filelist || filelist.length === 0) return;
@@ -164,6 +228,11 @@ export function BestFocusTest({
     const firstPath =
       (filelist[0] as File & { webkitRelativePath?: string }).webkitRelativePath || '';
     const topFolder = firstPath.split('/')[0] || '';
+    const info = `${groups.length} folders · ${totalImgs} images`;
+    setLastFolderLabel(topFolder);
+    setLastFolderInfo(info);
+    try { localStorage.setItem(STORAGE_KEY_LAST_NAME, topFolder); } catch { /* */ }
+    try { localStorage.setItem(STORAGE_KEY_LAST_INFO, info); } catch { /* */ }
 
     setFolders(groups);
     setSelectedFolderIdx(0);
@@ -185,10 +254,11 @@ export function BestFocusTest({
       applyCache(cache, groups, exactRoiMatch);
     } else {
       setResults([]);
-      setTotalMs(null);
-      setPixelCount(0);
+      setMetrics(null);
       setStatus(`${groups.length} folder(s), ${totalImgs} images`);
     }
+    // 자동 비교용: 같은 폴더 set 의 가장 최근 full-decode (partialCount === 0) 시간 찾기
+    setPreviousFullMs(findRecentFullMs(topFolder, groups.length, totalImgs));
   }
 
   function applyCache(cache: CacheEntry, groups: FolderInput[], exactRoiMatch: boolean) {
@@ -209,8 +279,16 @@ export function BestFocusTest({
           } as FolderResult);
     });
     setResults(aligned);
-    setTotalMs(cache.totalMs);
-    setPixelCount(cache.pixelCount);
+    setMetrics({
+      totalMs: cache.totalMs,
+      decodeMs: 0,
+      edgenessMs: 0,
+      totalImages: cache.totalImages,
+      totalPixels: cache.totalPixels ?? 0,
+      totalBytes: cache.totalBytes ?? 0,
+      partialCount: cache.partialCount ?? 0,
+      fileSizeSum: cache.fileSizeSum ?? 0,
+    });
     if (exactRoiMatch) {
       const at = new Date(cache.timestamp).toLocaleString();
       setStatus(`Loaded cached result from ${at}`);
@@ -226,8 +304,8 @@ export function BestFocusTest({
     if (folders.length === 0 || running) return;
     setRunning(true);
     setResults([]);
-    setTotalMs(null);
-    setPixelCount(0);
+    setMetrics(null);
+    setBatchRows(null);
 
     const folderTotal = folders.length;
     const totalTasks = folders.reduce((s, f) => s + f.files.length, 0);
@@ -262,8 +340,13 @@ export function BestFocusTest({
     let nextTaskIdx = 0;
     let completedTasks = 0;
     let foldersDone = 0;
+    let aggDecodeMs = 0;
+    let aggEdgeMs = 0;
+    let aggPixels = 0;
+    let aggBytes = 0;
+    let aggPartial = 0;
+    let aggFileSize = 0;
     const tAll = performance.now();
-    let pixelsFirst = 0;
 
     await new Promise<void>((resolve) => {
       let resolved = false;
@@ -274,14 +357,26 @@ export function BestFocusTest({
         workersRef.current = [];
         cleanupRef.current = null;
         const tEnd = performance.now();
-        setTotalMs(tEnd - tAll);
-        setPixelCount(pixelsFirst);
+        const totalMs = tEnd - tAll;
+        setMetrics({
+          totalMs,
+          decodeMs: aggDecodeMs,
+          edgenessMs: aggEdgeMs,
+          totalImages: completedTasks,
+          totalPixels: aggPixels,
+          totalBytes: aggBytes,
+          partialCount: aggPartial,
+          fileSizeSum: aggFileSize,
+        });
         setProgress(null);
         setRunning(false);
         if (cancelled) {
           setStatus(`Cancelled — ${foldersDone}/${folderTotal} folders done`);
         } else {
-          setStatus(`Done: ${folderTotal} folders in ${((tEnd - tAll) / 1000).toFixed(2)}s (${N_WORKERS} workers)`);
+          const partialPct = aggPartial > 0 && completedTasks > 0
+            ? ` · ${((aggPartial / completedTasks) * 100).toFixed(0)}% partial`
+            : '';
+          setStatus(`Done: ${folderTotal} folders in ${(totalMs / 1000).toFixed(2)}s (${N_WORKERS} workers${partialPct})`);
           // 결과 캐시 (cancel 안 됐을 때만)
           try {
             const firstPath = (folders[0]?.files[0] as File & { webkitRelativePath?: string }).webkitRelativePath || '';
@@ -297,8 +392,12 @@ export function BestFocusTest({
               totalImages: totalImgs,
               roi,
               mode,
-              totalMs: tEnd - tAll,
-              pixelCount: pixelsFirst,
+              totalMs,
+              pixelCount: aggPixels,
+              totalPixels: aggPixels,
+              totalBytes: aggBytes,
+              partialCount: aggPartial,
+              fileSizeSum: aggFileSize,
               timestamp: Date.now(),
               results: folderResults.map((r) => ({
                 name: r.name,
@@ -337,11 +436,17 @@ export function BestFocusTest({
       for (const worker of workers) {
         worker.onmessage = (e: MessageEvent<BfWorkerResult>) => {
           if (resolved) return;
-          const { folderIdx, frameIdx, edgeness, decodeMs, edgenessMs } = e.data;
+          const { folderIdx, frameIdx, edgeness, decodeMs, edgenessMs, pixels, bytes, partial } = e.data;
           const r = folderResults[folderIdx];
           r.edgeness[frameIdx] = edgeness;
           r.decodeMs += decodeMs;
           r.edgenessMs += edgenessMs;
+          aggDecodeMs += decodeMs;
+          aggEdgeMs += edgenessMs;
+          aggPixels += pixels;
+          aggBytes += bytes;
+          if (partial) aggPartial++;
+          aggFileSize += folders[folderIdx].files[frameIdx].size;
           folderCompleted[folderIdx]++;
           completedTasks++;
 
@@ -369,20 +474,6 @@ export function BestFocusTest({
         };
       }
 
-      // 첫 픽셀 카운트는 worker로 받아오기 어렵다 — 첫 파일의 헤더만 메인에서 미리 읽음.
-      if (folders[0]?.files[0]) {
-        folders[0].files[0].arrayBuffer().then((buf) => {
-          try {
-            const view = new DataView(buf);
-            if (view.getUint16(0, true) === 0x4d42) {
-              const w = view.getInt32(18, true);
-              const h = Math.abs(view.getInt32(22, true));
-              pixelsFirst = w * h;
-            }
-          } catch { /* ignore */ }
-        });
-      }
-
       // 초기 작업 분배 — 워커마다 1개씩 (이후로는 message handler 안에서 chain)
       for (const w of workers) assignNext(w);
     });
@@ -396,6 +487,8 @@ export function BestFocusTest({
     setRoi((r) => ({ ...r, [key]: Math.max(0, Math.round(v)) }));
 
   const [savingCsv, setSavingCsv] = useState<boolean>(false);
+  // batch ETW 결과 — Save ETW CSV 후 메모리에 보관해 트렌드 차트에 사용
+  const [batchRows, setBatchRows] = useState<BatchEtwCsvRow[] | null>(null);
   const [previewBitmap, setPreviewBitmap] = useState<ImageBitmap | null>(null);
   const [previewName, setPreviewName] = useState<string | null>(null);
   const [editorWidth, setEditorWidth] = useState<number>(() => {
@@ -494,6 +587,7 @@ export function BestFocusTest({
 
     const csv = buildBatchEtwCsv(batchRows, lowerThPercent, upperThPercent);
     downloadCsv(`etw_batch_${batchRows.length}_folders.csv`, csv);
+    setBatchRows(batchRows);
     setSavingCsv(false);
     setStatus(
       `CSV: ${batchRows.length} folders × ${points.length} points` +
@@ -596,16 +690,22 @@ export function BestFocusTest({
         {/* Left: controls + folder list */}
         <aside className="flex w-[300px] flex-col gap-3 overflow-y-auto border-r border-slate-300 bg-slate-50 p-3">
           <div className="rounded border border-slate-200 bg-white p-3">
-            <div className="mb-2 text-xs font-semibold text-slate-700">Parent folder</div>
             <button
-              className="w-full rounded bg-slate-700 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
-              disabled={running}
               onClick={() => folderInputRef.current?.click()}
+              disabled={running}
+              className="w-full rounded bg-slate-700 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-40"
             >
               Pick folder…
             </button>
+            {lastFolderLabel && (
+              <div className="mt-2 truncate text-[10px] text-slate-600" title={lastFolderLabel}>
+                <span className="text-slate-400">현재: </span>
+                <span className="font-medium text-slate-700">{lastFolderLabel}</span>
+              </div>
+            )}
             <div className="mt-1 text-[10px] text-slate-500">
-              {folders.length} folder(s), {folders.reduce((a, g) => a + g.files.length, 0)} images
+              {folders.length} folders · {folders.reduce((a, g) => a + g.files.length, 0)} images
+              {lastFolderInfo && folders.length === 0 && ` · last: ${lastFolderInfo}`}
             </div>
           </div>
 
@@ -713,18 +813,65 @@ export function BestFocusTest({
             )}
           </div>
 
-          {totalMs !== null && results.length > 0 && (
+          {metrics && results.length > 0 && (
             <div className="rounded border border-slate-200 bg-white p-3 text-xs">
-              <div className="mb-1 font-semibold text-slate-700">Overall</div>
+              <div className="mb-1 font-semibold text-slate-700">Speed</div>
               <div className="grid grid-cols-[110px_1fr] gap-y-0.5">
-                <span className="text-slate-500">Folders</span>
-                <span className="font-mono">{results.length}</span>
-                <span className="text-slate-500">Pixels/img</span>
-                <span className="font-mono">{(pixelCount / 1e6).toFixed(2)} MP</span>
                 <span className="text-slate-500">Total</span>
-                <span className="font-mono">{(totalMs / 1000).toFixed(2)} s</span>
+                <span className="font-mono">{(metrics.totalMs / 1000).toFixed(2)} s</span>
                 <span className="text-slate-500">Per folder</span>
-                <span className="font-mono">{(totalMs / 1000 / results.length).toFixed(2)} s</span>
+                <span className="font-mono">{(metrics.totalMs / Math.max(1, results.length)).toFixed(0)} ms</span>
+                <span className="text-slate-500">Per image</span>
+                <span className="font-mono">{(metrics.totalMs / Math.max(1, metrics.totalImages)).toFixed(1)} ms</span>
+                <span className="text-slate-500">Throughput</span>
+                <span className="font-mono">
+                  {(metrics.totalImages / (metrics.totalMs / 1000)).toFixed(1)} img/s
+                </span>
+                <span className="text-slate-500">Decode</span>
+                <span className="font-mono" title="Aggregated across workers">
+                  {(metrics.decodeMs / Math.max(1, metrics.totalImages)).toFixed(1)} ms/img
+                </span>
+                <span className="text-slate-500">Edgeness</span>
+                <span className="font-mono">
+                  {(metrics.edgenessMs / Math.max(1, metrics.totalImages)).toFixed(2)} ms/img
+                </span>
+                <span className="text-slate-500">Pixels read</span>
+                <span className="font-mono">
+                  {(metrics.totalPixels / 1e6).toFixed(2)} Mpx
+                </span>
+                <span className="text-slate-500">Data read</span>
+                <span className="font-mono">
+                  {(metrics.totalBytes / 1e9).toFixed(2)} GB
+                  {metrics.fileSizeSum > 0 && (
+                    <span className="ml-1 text-emerald-700">
+                      ({((metrics.totalBytes / metrics.fileSizeSum) * 100).toFixed(0)}% of {(metrics.fileSizeSum / 1e9).toFixed(2)} GB)
+                    </span>
+                  )}
+                </span>
+                <span className="text-slate-500">Read rate</span>
+                <span className="font-mono">
+                  {(metrics.totalBytes / 1e6 / (metrics.totalMs / 1000)).toFixed(0)} MB/s
+                </span>
+                <span className="text-slate-500">Partial</span>
+                <span className="font-mono">
+                  {metrics.partialCount}/{metrics.totalImages}
+                  {metrics.totalImages > 0 && (
+                    <span className="ml-1 text-slate-400">
+                      ({((metrics.partialCount / metrics.totalImages) * 100).toFixed(0)}%)
+                    </span>
+                  )}
+                </span>
+                {previousFullMs !== null && metrics.partialCount > 0 && (
+                  <>
+                    <span className="text-slate-500">Prev full</span>
+                    <span className="font-mono">
+                      {(previousFullMs / 1000).toFixed(2)} s
+                      <span className="ml-1 text-emerald-700">
+                        ({(((previousFullMs - metrics.totalMs) / previousFullMs) * 100).toFixed(0)}% faster · ×{(previousFullMs / metrics.totalMs).toFixed(2)})
+                      </span>
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -907,14 +1054,20 @@ export function BestFocusTest({
             </div>
           </div>
 
-          <div className="flex h-56 flex-col rounded border border-slate-200 bg-white p-3">
+          <div className="flex h-72 flex-col rounded border border-slate-200 bg-white p-3">
             <div className="mb-1 text-xs font-semibold text-slate-700">
-              Height (µm) vs Best frame index
+              {batchRows && batchRows.length > 0
+                ? `ETW batch trend · ${batchRows.length} folders × ${points.length} points`
+                : 'Height (µm) vs Best frame index'}
             </div>
             <div className="min-h-0 flex-1">
-              {heightChartData.length === 0 ? (
+              {batchRows && batchRows.length > 0 ? (
+                <EtwBatchTrendChart rows={batchRows} points={points} />
+              ) : heightChartData.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-sm text-slate-400">
                   Folder names must contain a height (e.g. "39100um")
+                  <br />
+                  Save ETW CSV to see the H/V/Average trend chart
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
