@@ -616,7 +616,7 @@ export function MultiRoiBestFocus({ onClose }: Props) {
           if (i === centerIdx) return null;
           const v = b?.bestStepValue;
           if (v == null || !Number.isFinite(v)) return null;
-          return v - center;
+          return center - v;
         });
         const validDiffs = diffByRoi.filter((d): d is number => d !== null);
         const avg = validDiffs.length >= 2
@@ -1003,7 +1003,7 @@ export function MultiRoiBestFocus({ onClose }: Props) {
             <div className="flex flex-1 flex-col p-3">
               <div className="mb-1 flex items-baseline justify-between text-xs">
                 <span className="font-semibold text-slate-700">
-                  Tilt trend · (ROI − Center) per folder
+                  Tilt trend · (Center − ROI) per folder
                 </span>
                 {selectedFolderResult && centerIdx >= 0 && (() => {
                   const center = selectedFolderResult.bestByRoi[centerIdx]?.bestStepValue;
@@ -1011,8 +1011,8 @@ export function MultiRoiBestFocus({ onClose }: Props) {
                   const parts = selectedFolderResult.bestByRoi
                     .map((b, i) => {
                       if (i === centerIdx || !b) return null;
-                      const d = b.bestStepValue - center;
-                      return `${rois[i]?.name ?? ''}−C: ${d.toFixed(1)}`;
+                      const d = center - b.bestStepValue;
+                      return `C−${rois[i]?.name ?? ''}: ${d.toFixed(1)}`;
                     })
                     .filter(Boolean);
                   return (

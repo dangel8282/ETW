@@ -26,11 +26,11 @@ function bfRound(n: number | null | undefined): number | null {
 /**
  * 출력 포맷 (예: ROI 3개 — Left / Center / Right):
  *   FolderName, Left_BF, Center_BF, Right_BF,
- *   Left_BF-Center_BF, Right_BF-Center_BF,
- *   (Left_BF-Center_BF + Right_BF-Center_BF) / 2
+ *   Center_BF-Left_BF, Center_BF-Right_BF,
+ *   (Center_BF-Left_BF + Center_BF-Right_BF) / 2
  *
  * - BF = bestStepValue (반올림)
- * - 차이는 idx 1 (중앙 ROI) 기준
+ * - 차이는 idx 1 (중앙 ROI) 기준, Center − ROI
  * - ROI 가 1개면 BF 컬럼만, 2개면 차이 1개, 3개 이상이면 차이 N-1개 + 평균
  */
 export function buildMultiRoiCsv(rois: NamedRoi[], rows: MrbfFolderRow[]): string {
@@ -43,11 +43,11 @@ export function buildMultiRoiCsv(rois: NamedRoi[], rows: MrbfFolderRow[]): strin
     for (let i = 0; i < rois.length; i++) {
       if (i === centerIdx) continue;
       diffIndices.push(i);
-      header.push(`${rois[i].name}_BF-${rois[centerIdx].name}_BF`);
+      header.push(`${rois[centerIdx].name}_BF-${rois[i].name}_BF`);
     }
     if (diffIndices.length >= 2) {
       const expr = diffIndices
-        .map((i) => `${rois[i].name}_BF-${rois[centerIdx].name}_BF`)
+        .map((i) => `${rois[centerIdx].name}_BF-${rois[i].name}_BF`)
         .join(' + ');
       header.push(`(${expr}) / ${diffIndices.length}`);
     }
@@ -67,7 +67,7 @@ export function buildMultiRoiCsv(rois: NamedRoi[], rows: MrbfFolderRow[]): strin
       const diffs: (number | null)[] = [];
       for (const i of diffIndices) {
         const v = bfValues[i];
-        const d = v != null && center != null ? v - center : null;
+        const d = v != null && center != null ? center - v : null;
         diffs.push(d);
         cells.push(d == null ? '' : String(d));
       }

@@ -18,7 +18,7 @@ export interface TiltTrendPoint {
   height: number;
   folderIdx: number;
   name: string;
-  diffByRoi: (number | null)[];  // [i] = BF_i - BF_center, center 자리는 null
+  diffByRoi: (number | null)[];  // [i] = BF_center - BF_i, center 자리는 null
   avg: number | null;             // 비-center diff 들의 평균
 }
 
@@ -47,7 +47,7 @@ export function TiltTrendChart({ data, rois, centerIdx, selectedHeight, onPointC
     for (let i = 0; i < rois.length; i++) {
       if (i === centerIdx) continue;
       out.push({
-        label: `${rois[i].name} − ${rois[centerIdx]?.name ?? 'C'}`,
+        label: `${rois[centerIdx]?.name ?? 'C'} − ${rois[i].name}`,
         color: colorForRoiIdx(i),
         kind: 'diff',
         sourceIdx: i,
