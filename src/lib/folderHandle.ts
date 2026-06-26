@@ -96,7 +96,6 @@ export async function collectFiles(
     const subDirs: Array<[FileSystemDirectoryHandle, string]> = [];
     const filePromises: Promise<File>[] = [];
     const filePaths: string[] = [];
-    // @ts-expect-error — TS lib 가 아직 async iter 미반영
     for await (const entry of dir.values()) {
       if (entry.kind === 'directory') {
         subDirs.push([entry as FileSystemDirectoryHandle, `${prefix}${entry.name}/`]);

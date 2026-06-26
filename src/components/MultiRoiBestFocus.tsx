@@ -581,21 +581,6 @@ export function MultiRoiBestFocus({ onClose }: Props) {
 
   const selectedFolderResult = results[selectedFolderIdx];
 
-  // 선택 폴더의 ROI 별 곡선 데이터 (overlay)
-  const selectedChartData = useMemo(() => {
-    if (!selectedFolderResult) return [];
-    const len = selectedFolderResult.count;
-    const out: Array<{ i: number } & Record<string, number | null>> = [];
-    for (let i = 0; i < len; i++) {
-      const row: { i: number } & Record<string, number | null> = { i };
-      for (let r = 0; r < rois.length; r++) {
-        row[`r${r}`] = selectedFolderResult.edgenessByRoi[r]?.[i] ?? null;
-      }
-      out.push(row);
-    }
-    return out;
-  }, [selectedFolderResult, rois.length]);
-
   // CSV / Run 활성화 여부
   const canRun = folders.length > 0 && rois.length > 0 && !running;
   const canCsv = !running && results.some((r) => r.bestByRoi.some((b) => b !== null));
@@ -606,15 +591,11 @@ export function MultiRoiBestFocus({ onClose }: Props) {
     return results
       .map((r, idx) => {
         if (!r.bestByRoi.some((b) => b !== null) || r.heightUm === null) return null;
-        const row: { height: number; folderIdx: number; name: string } & Record<string, number | null> = {
-          height: r.heightUm,
-          folderIdx: idx,
-          name: r.name,
-        };
+        const dynVals: Record<string, number | null> = {};
         r.bestByRoi.forEach((b, i) => {
-          row[`r${i}`] = b ? b.bestStepValue : null;
+          dynVals[`r${i}`] = b ? b.bestStepValue : null;
         });
-        return row;
+        return { height: r.heightUm, folderIdx: idx, name: r.name, ...dynVals };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [results]);
