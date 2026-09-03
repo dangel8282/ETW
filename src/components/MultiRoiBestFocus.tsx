@@ -2,7 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HeightTrendChart } from './HeightTrendChart';
 import { TiltTrendChart, type TiltTrendPoint } from './TiltTrendChart';
 import { MultiRoiEditor } from './MultiRoiEditor';
-import { colorForRoiIdx, defaultMultiRois, parseStepFromFilename, type NamedRoi } from '../lib/multiRoi';
+import {
+  colorForRoiIdx,
+  defaultMultiRois,
+  groupByFolder,
+  parseStepList,
+  type FolderInput,
+  type NamedRoi,
+} from '../lib/multiRoi';
 import { findBestFocus, type BestFocusResult } from '../lib/etwBestFocus';
 import MrbfWorker from '../lib/multiRoiBfWorker.ts?worker';
 import type { MrbfWorkerResult, MrbfWorkerTask } from '../lib/multiRoiBfWorker';
@@ -16,35 +23,6 @@ import {
   saveCache,
   type MrbfCacheEntry,
 } from '../lib/multiRoiCache';
-
-const IMAGE_EXT_RE = /\.(bmp|png|jpe?g|tiff?|gif|webp)$/i;
-const naturalSort = (a: string, b: string) =>
-  a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-
-interface FolderInput {
-  name: string;
-  files: File[];
-}
-
-function groupByFolder(filelist: FileList): FolderInput[] {
-  const groups = new Map<string, File[]>();
-  for (const f of Array.from(filelist)) {
-    if (!IMAGE_EXT_RE.test(f.name)) continue;
-    const path = (f as File & { webkitRelativePath?: string }).webkitRelativePath || '';
-    const parts = path.split('/');
-    if (parts.length < 3) continue;
-    const folderName = parts[parts.length - 2];
-    if (!groups.has(folderName)) groups.set(folderName, []);
-    groups.get(folderName)!.push(f);
-  }
-  const out: FolderInput[] = [];
-  for (const [name, files] of groups) {
-    files.sort((a, b) => naturalSort(a.name, b.name));
-    out.push({ name, files });
-  }
-  out.sort((a, b) => naturalSort(a.name, b.name));
-  return out;
-}
 
 const STORAGE_KEY_ROIS = 'mrbf_last_rois';
 const STORAGE_KEY_MODE = 'mrbf_last_mode';
@@ -488,9 +466,9 @@ export function MultiRoiBestFocus({ onClose }: Props) {
           completedTasks++;
 
           if (folderCompleted[folderIdx] === folders[folderIdx].files.length) {
-            // 파일명에서 step 값 추출 — 모두 추출되면 stepList 전달 (best step value 계산)
+            // 파일명(또는 상위 폴더명)에서 step 값 추출 — 모두 추출되면 stepList 전달
             const folderFiles = folders[folderIdx].files;
-            const stepList = folderFiles.map((f) => parseStepFromFilename(f.name));
+            const stepList = parseStepList(folderFiles);
             const hasAllSteps = stepList.every((s): s is number => s !== null);
             const stepArg = hasAllSteps ? (stepList as number[]) : undefined;
             for (let i = 0; i < roiCount; i++) {

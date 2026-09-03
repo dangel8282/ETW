@@ -25,6 +25,7 @@ import {
 } from '../lib/bestFocusCache';
 import { decodeImageToGray } from '../lib/etwDecodeGray';
 import { EtwBatchTrendChart } from './EtwBatchTrendChart';
+import { groupByFolder, type FolderInput } from '../lib/multiRoi';
 import { analyze } from '../lib/etwAnalyzer';
 import { buildBatchEtwCsv, downloadCsv, type BatchEtwCsvRow } from '../lib/etwCsv';
 import type { EtwMeasurementPoint, EtwMeasurementResult } from '../lib/etwTypes';
@@ -37,14 +38,6 @@ const MODE_LABELS: Record<number, string> = {
   3: '3 — Laplacian',
 };
 
-const IMAGE_EXT_RE = /\.(bmp|png|jpe?g|tiff?|gif|webp)$/i;
-const naturalSort = (a: string, b: string) =>
-  a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-
-interface FolderInput {
-  name: string;
-  files: File[];
-}
 interface FolderResult {
   name: string;
   heightUm: number | null;
@@ -69,29 +62,6 @@ interface RunMetrics {
 function parseHeightUm(name: string): number | null {
   const m = name.match(/(-?\d+(?:\.\d+)?)\s*um/i);
   return m ? parseFloat(m[1]) : null;
-}
-
-/** webkitRelativePath 로 서브폴더별로 그룹화. 최상위 폴더에 직접 있는 파일은 제외. */
-function groupByFolder(filelist: FileList): FolderInput[] {
-  const groups = new Map<string, File[]>();
-  for (const f of Array.from(filelist)) {
-    if (!IMAGE_EXT_RE.test(f.name)) continue;
-    // webkitRelativePath 예: "20260625.../39100um/I0-0.BMP"
-    const path = (f as File & { webkitRelativePath?: string }).webkitRelativePath || '';
-    const parts = path.split('/');
-    // depth < 3 (= 최상위 폴더 직속 파일) 은 무시 — 서브폴더만 처리.
-    if (parts.length < 3) continue;
-    const folderName = parts[parts.length - 2];
-    if (!groups.has(folderName)) groups.set(folderName, []);
-    groups.get(folderName)!.push(f);
-  }
-  const out: FolderInput[] = [];
-  for (const [name, files] of groups) {
-    files.sort((a, b) => naturalSort(a.name, b.name));
-    out.push({ name, files });
-  }
-  out.sort((a, b) => naturalSort(a.name, b.name));
-  return out;
 }
 
 const N_WORKERS = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
